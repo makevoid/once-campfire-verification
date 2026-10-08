@@ -3,7 +3,7 @@ require "open3"
 require "tempfile"
 
 module AcknowledgedWrites
-  def self.verify(database, room, files, expected)
+  def self.verify(database, room, files, expected, schema: :rails)
     rows = files.flat_map { |path| File.foreach(path).map { |line| JSON.parse(line) } }
     raise "Wrong acknowledgement count" unless rows.size == expected
     raise "Invalid acknowledgement" unless rows.all? { |row| row["id"].is_a?(Integer) && row["id"] > 0 && /\Abench write [0-9a-f]+\z/.match?(row["token"].to_s) }
@@ -13,6 +13,12 @@ module AcknowledgedWrites
     Tempfile.create(["campfire-write-audit-", ".json"]) do |file|
       file.write(JSON.generate(rows))
       file.flush
+      raise "Unsupported write schema" unless %i[rails roda].include?(schema)
+      body_check = if schema == :roda
+        "instr(m.body,a.token)>0"
+      else
+        "EXISTS(SELECT 1 FROM action_text_rich_texts rt WHERE rt.record_type='Message' AND rt.name='body' AND rt.record_id=m.id AND instr(rt.body,a.token)>0)"
+      end
       query = <<~SQL
         WITH acknowledged AS MATERIALIZED (
           SELECT json_extract(value, '$.id') AS id, json_extract(value, '$.token') AS token
@@ -21,8 +27,7 @@ module AcknowledgedWrites
         SELECT COUNT(*) AS valid FROM acknowledged a CROSS JOIN messages m
         WHERE m.id=a.id
         AND m.room_id=#{Integer(room)}
-        AND EXISTS(SELECT 1 FROM action_text_rich_texts rt WHERE rt.record_type='Message'
-          AND rt.name='body' AND rt.record_id=m.id AND instr(rt.body,a.token)>0)
+        AND #{body_check}
         AND EXISTS(SELECT 1 FROM message_search_index idx
           WHERE idx.rowid=m.id AND instr(idx.body,a.token)>0)
       SQL

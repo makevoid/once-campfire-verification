@@ -2,6 +2,7 @@ require "fileutils"
 require "json"
 require "open3"
 require "optparse"
+require "digest"
 
 module BenchmarkSupport
   ROOT = File.expand_path("..", __dir__)
@@ -13,6 +14,21 @@ module BenchmarkSupport
     output
   end
 
+  # Include dirty and new runtime sources, but not measurements, docs, or tests.
+  # Used for build labels as well as receipts, so stale local images fail closed.
+  def source_fingerprint(source)
+    paths = run("git", "-C", source, "ls-files", "-z", "--cached", "--others", "--exclude-standard").split("\0").uniq.sort
+    digest = Digest::SHA256.new
+    paths.each do |path|
+      next unless path.match?(%r{\A(?:app/|bin/|config/|db/|frontend/|hooks/|lib/|public/|views/|vendor/javascript/|bench/verification/boot\z|bench/verification/App\.Dockerfile\z)}) ||
+        %w[app.rb Dockerfile Gemfile Gemfile.lock config.ru Rakefile .ruby-version .dockerignore].include?(path)
+      full = File.join(source, path)
+      next unless File.file?(full)
+      digest << path << "\0" << File.binread(full) << "\0"
+    end
+    digest.hexdigest
+  end
+
   def remove_container(name)
     Open3.capture3("docker", "rm", "-f", name)
   end
@@ -22,6 +38,8 @@ module BenchmarkSupport
     FileUtils.mkdir_p(destination)
     FileUtils.cp_r(File.join(seed, "db"), File.join(destination, "db"))
     FileUtils.cp_r(File.join(seed, "storage"), File.join(destination, "files"))
+    # Disposable fixtures must be writable by the production container UID.
+    FileUtils.chmod_R("a+rwX", destination)
   end
 
   def mounts(paths)

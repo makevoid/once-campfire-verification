@@ -2,3 +2,5 @@
 /fixtures/default/
 /node_modules/
 /loadgen/target/
+
+/fixtures/.seed-*/

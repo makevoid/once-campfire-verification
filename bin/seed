@@ -29,7 +29,8 @@ end
 image_env = JSON.parse(run("docker", "image", "inspect", "-f", "{{json .Config.Env}}", image))
 raise "reference image revision mismatch" unless image_env.include?("GIT_REVISION=#{revision}")
 FileUtils.mkdir_p(File.dirname(options[:output]))
-Dir.mktmpdir(".seed-", File.dirname(options[:output])) do |data|
+data = Dir.mktmpdir(".seed-", File.dirname(options[:output]))
+begin
   FileUtils.mkdir_p(%w[db storage].map { |name| File.join(data, name) })
   key = OpenSSL::PKey::EC.generate("prime256v1")
   credentials = {
@@ -59,5 +60,9 @@ Dir.mktmpdir(".seed-", File.dirname(options[:output])) do |data|
     image: run("docker", "image", "inspect", "-f", "{{.Id}}", image).strip,
     seed_sha256: Digest::SHA256.file(File.join(data, "db/production.sqlite3")).hexdigest)
   FileUtils.cp_r(data, options[:output])
+  FileUtils.remove_entry(data)
+rescue StandardError
+  warn "Incomplete seed retained for diagnosis: #{data}"
+  raise
 end
 puts options[:output]

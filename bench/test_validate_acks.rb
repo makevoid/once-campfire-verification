@@ -3,6 +3,32 @@ require "tmpdir"
 require_relative "validate_acks"
 
 class AcknowledgedWritesTest < Minitest::Test
+  def test_roda_acknowledgements_check_exact_body_room_and_search_entry
+    Dir.mktmpdir do |folder|
+      database = File.join(folder, "data.db")
+      setup = <<~SQL
+        CREATE TABLE messages(id INTEGER PRIMARY KEY, room_id INTEGER, body TEXT);
+        CREATE VIRTUAL TABLE message_search_index USING fts5(body);
+        INSERT INTO messages VALUES(42,1,'<p>bench write abc</p>');
+        INSERT INTO message_search_index(rowid,body) VALUES(42,'bench write abc');
+      SQL
+      _, errors, status = Open3.capture3("sqlite3", database, setup)
+      assert status.success?, errors
+      audit = File.join(folder, "acks.jsonl")
+      row = JSON.generate(id: 42, token: "bench write abc") + "\n"
+      File.write(audit, row)
+      assert_equal({ "verified" => true, "acknowledged" => 1 }, AcknowledgedWrites.verify(database, 1, [audit], 1, schema: :roda))
+      assert_raises(RuntimeError) { AcknowledgedWrites.verify(database, 2, [audit], 1, schema: :roda) }
+      File.write(audit, row * 2)
+      assert_raises(RuntimeError) { AcknowledgedWrites.verify(database, 1, [audit], 2, schema: :roda) }
+      File.write(audit, row)
+      Open3.capture3("sqlite3", database, "UPDATE messages SET body='wrong';")
+      assert_raises(RuntimeError) { AcknowledgedWrites.verify(database, 1, [audit], 1, schema: :roda) }
+      Open3.capture3("sqlite3", database, "UPDATE messages SET body='bench write abc'; DELETE FROM message_search_index;")
+      assert_raises(RuntimeError) { AcknowledgedWrites.verify(database, 1, [audit], 1, schema: :roda) }
+    end
+  end
+
   def test_rejects_duplicate_acks_missing_body_wrong_room_and_missing_index
     Dir.mktmpdir do |folder|
       database = File.join(folder, "data.db")

@@ -1,10 +1,11 @@
 # once-campfire-verification
 
-Shared verification and benchmarks for [Campfire](https://github.com/basecamp/once-campfire) and its Django, Laravel, Express, Elixir, Go, Rust, C and C++ implementations.
+Shared verification and benchmarks for [Campfire](https://github.com/basecamp/once-campfire) and its Roda, Django, Laravel, Express, Elixir, Go, Rust, C and C++ implementations.
 
 Every measured HTTP response must match its route contract: status, headers, complete decoded body, expected messages and content. Every acknowledged message write must match its exact persisted ID, body, room and search-index entry. Any invalid response or failed write audit fails the run. Browser flows check installation, live messages, editing, search, permissions, settings, invitations and session transfer.
 
 See the [current results and verification report](docs/performance-review.md).
+The [Rails/Roda comparison on an Apple M4 Mac mini with 10 cores](https://github.com/makevoid/once-campfire-roda/blob/main/docs/performance.md) records all production and mixed-workload rounds, source fingerprints and validation limits.
 
 ## Run
 
@@ -19,7 +20,19 @@ cargo build --release --locked --manifest-path loadgen/Cargo.toml
 bin/benchmark --apps rails,elixir,go,rust
 ```
 
-Build the implementations' production images first. Override their image names with `RAILS_IMAGE`, `DJANGO_IMAGE`, `LARAVEL_IMAGE`, `EXPRESS_IMAGE`, `ELIXIR_IMAGE`, `GO_IMAGE`, `RUST_IMAGE`, `C_IMAGE` and `CPP_IMAGE`. The C++ implementation is not in the default `--apps` list; select it with `--apps rust,cpp`. `--help` lists the benchmark options, including CPU affinity, seed path, route selection and output directory. The default is three alternating rounds with 16 concurrent clients. A process lock prevents overlapping benchmark runs. The fixture builder pins public Rails revision `90b3300` and generates real attachments and variants; it generates disposable signing, push and login credentials locally and refuses to overwrite an existing seed.
+Build the implementations' production images first. Override their image names with `RAILS_IMAGE`, `RODA_IMAGE`, `DJANGO_IMAGE`, `LARAVEL_IMAGE`, `EXPRESS_IMAGE`, `ELIXIR_IMAGE`, `GO_IMAGE`, `RUST_IMAGE`, `C_IMAGE` and `CPP_IMAGE`. The default comparison is **Rails versus Roda**, with three alternating eight-second rounds and 16 concurrent clients. Select other implementations explicitly with `--apps`. `--help` lists CPU affinity, seed path, route selection and output options. A process lock prevents overlapping benchmark runs. The fixture builder pins public Rails revision `90b3300` and generates real attachments and variants; it generates disposable signing, push and login credentials locally and refuses to overwrite an existing seed.
+
+The default CPU sets are 0–3 for the server and 4–7 for the client, requiring at least eight available CPUs. Both Ruby servers explicitly enable YJIT. Source checkout locations can be overridden with variables such as `RAILS_SOURCE` and `RODA_SOURCE`. Receipts record source revisions, dirty state and runtime fingerprints; images carrying an `io.campfire.source.sha256` label must match their source checkout.
+
+On macOS, use Homebrew's SQLite CLI and Docker Desktop with at least eight virtual CPUs. Build the containerized client from this repository:
+
+```sh
+docker build -f loadgen/Dockerfile -t campfire-verification:local .
+```
+
+The host orchestrator uses bridge networking on macOS and exposes the server only on host loopback. The client container shares the server's network namespace and mounts only its disposable fixture directory. `--client-image` (or `BENCH_CLIENT_IMAGE`) overrides the client image; `--network` overrides server networking. Linux defaults to the host Rust binary with `taskset` and host networking. Client CPU utilization is unavailable in container-client receipts.
+
+Roda's benchmark image must import the shared Rails fixture into `/rails/storage/db/roda.sqlite3` and configure its normal production server and worker. The public [Roda preparation command](https://github.com/makevoid/once-campfire-roda/blob/main/bench/verification/README.md) builds that adapter. Read expectations still come from the common Rails fixture SQL; Roda writes are audited against its native schema. Both runtimes receive the same disabled placeholder authors for orphaned messages and loopback discard URLs for outbound fixture endpoints. Original seed data remains unchanged.
 
 An optional cache-churn profile runs the same validated reads alongside one paced writer:
 
